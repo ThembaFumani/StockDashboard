@@ -5,7 +5,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>6f0d2065-d5b3-4a6e-ac8c-f91e932bcd07</UserSecretsId>
-    <DockerComposeProjectPath>../docker-compose.dcproj</DockerComposeProjectPath>
     <EnableTopLevelStatements>false</EnableTopLevelStatements>
   </PropertyGroup>
 
@@ -18,14 +17,6 @@
     <None Remove="Models\" />
     <None Remove="Repositories\" />
     <None Remove="Services\" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Update="Dockerfile">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <Content Include="StockDashBoard.API.csproj">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Models\" />
