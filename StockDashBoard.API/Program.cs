@@ -1,6 +1,6 @@
 ﻿using StackExchange.Redis;
+using StockDashBoard.API.Middleware;
 using StockDashBoard.API.Repositories;
-using StockDashBoard.API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,7 +12,6 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<IStockRepository,StockRepository>();
-builder.Services.AddScoped<IStockPriceService, StockPriceService>();
 builder.Services.AddCors(options =>
         {
             options.AddPolicy("CorsPolicy",
@@ -40,6 +39,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseMiddleware<ApiKeyMiddleware>();
 
 app.UseAuthorization();
 
