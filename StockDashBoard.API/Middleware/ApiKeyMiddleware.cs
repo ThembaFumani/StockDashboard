@@ -1,7 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+
+using Azure.Security.KeyVault.Secrets;
 
 namespace StockDashBoard.API.Middleware
 {
@@ -10,10 +8,12 @@ namespace StockDashBoard.API.Middleware
         private readonly RequestDelegate _next;
         private readonly string APIKEYNAME = "ApiKey";
         private readonly ILogger<ApiKeyMiddleware> _logger;
-        public ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> logger)
+        private readonly SecretClient _keyVaultClient;
+        public ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> logger, SecretClient keyVaultClient)
         {
             _next = next;
             _logger = logger;
+            _keyVaultClient = keyVaultClient;
         }
 
         public async Task InvokeAsync(HttpContext context, IConfiguration configuration)
@@ -26,9 +26,10 @@ namespace StockDashBoard.API.Middleware
                 return;
             }
 
-            var apiKey = configuration.GetValue<string>(APIKEYNAME);
-
-            if (!apiKey.Equals(extractedApiKey))
+            var secret = await _keyVaultClient.GetSecretAsync(APIKEYNAME);
+            var apiKeyFromVault = secret.Value.Value;
+            
+            if (!apiKeyFromVault.Equals(extractedApiKey))
             {
                 _logger.LogWarning("Unauthorized client.");
                 context.Response.StatusCode = 401; // Unauthorized
