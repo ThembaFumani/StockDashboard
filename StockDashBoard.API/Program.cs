@@ -1,11 +1,17 @@
 ﻿using StackExchange.Redis;
 using StockDashBoard.API.Middleware;
 using StockDashBoard.API.Repositories;
+using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
+using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var keyVaultName = builder.Configuration["KeyVaultName"];  
+var keyVaultUri = new Uri($"https://{keyVaultName}.vault.azure.net/");
+builder.Configuration.AddAzureKeyVault(keyVaultUri, new DefaultAzureCredential()); 
 // Add services to the container.
-
+builder.Services.AddSingleton(new SecretClient(keyVaultUri, new DefaultAzureCredential()));
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
