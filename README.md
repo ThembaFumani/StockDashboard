@@ -19,8 +19,8 @@ Controllers/
 Middleware/
     
 Models/
-    
-    
+    StockData.cs
+    StockMetaData.cs
     StockResponse.cs
 obj/
     Debug/
