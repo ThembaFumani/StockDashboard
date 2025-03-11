@@ -30,104 +30,153 @@ namespace StockDashBoard.API.Repositories
 
         public async Task<StockResponse> GetStockData(string symbol)
         {
-            var cachedData = await GetCachedDataAsync(symbol);
-            if (cachedData != null)
+            try
             {
-                _logger.LogInformation("Cache hit for symbol {symbol}", symbol);
-                return cachedData;
+                var cachedData = await GetCachedDataAsync(symbol);
+                if (cachedData != null)
+                {
+                    _logger.LogInformation("Cache hit for symbol {symbol}", symbol);
+                    return cachedData;
+                }
+
+                await CheckApiRateLimitsAsync();
+
+                _logger.LogInformation($"Cache miss for {symbol}. Fetching from API...");
+                var stockResponse = await FetchStockDataFromApiAsync(symbol);
+
+                await CacheStockDataAsync(symbol, stockResponse);
+
+                return stockResponse;
             }
-
-            await CheckApiRateLimitsAsync();
-
-            _logger.LogInformation($"Cache miss for {symbol}. Fetching from API...");
-            var stockResponse = await FetchStockDataFromApiAsync(symbol);
-
-            await CacheStockDataAsync(symbol, stockResponse);
-
-            return stockResponse;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error occurred while retrieving stock data for {symbol}", symbol);
+                throw new Exception("An error occurred while retrieving stock data. Please try again later.");
+            }
         }
 
         private async Task<StockResponse?> GetCachedDataAsync(string symbol)
         {
-            var cachedData = await _redisCache.StringGetAsync(symbol);
-            if (!cachedData.IsNullOrEmpty)
+            try
             {
-                return JsonSerializer.Deserialize<StockResponse>(cachedData);
+                var cachedData = await _redisCache.StringGetAsync(symbol);
+                if (!cachedData.IsNullOrEmpty)
+                {
+                    return JsonSerializer.Deserialize<StockResponse>(cachedData);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving cache for symbol {symbol}", symbol);
             }
             return null;
         }
 
         private async Task CheckApiRateLimitsAsync()
         {
-            string minuteKey = "stock:requests:minute";
-            string dailyKey = "stock:requests:day";
-
-            int minuteRequests = (int)await _redisCache.StringGetAsync(minuteKey);
-            int dailyRequests = (int)await _redisCache.StringGetAsync(dailyKey);
-
-            if (minuteRequests >= 5)
+            try
             {
-                _logger.LogWarning("API limit reached: 5 requests per minute exceeded.");
-                throw new Exception("API rate limit exceeded. Please wait a minute.");
+                string minuteKey = "stock:requests:minute";
+                string dailyKey = "stock:requests:day";
+
+                int minuteRequests = (int)await _redisCache.StringGetAsync(minuteKey);
+                int dailyRequests = (int)await _redisCache.StringGetAsync(dailyKey);
+
+                if (minuteRequests >= 5)
+                {
+                    _logger.LogWarning("API limit reached: 5 requests per minute exceeded.");
+                    throw new Exception("API rate limit exceeded. Please wait a minute.");
+                }
+                if (dailyRequests >= 500)
+                {
+                    _logger.LogWarning("API limit reached: 500 requests per day exceeded.");
+                    throw new Exception("Daily API limit exceeded. Try again tomorrow.");
+                }
+
+                await _redisCache.StringIncrementAsync(minuteKey);
+                await _redisCache.StringIncrementAsync(dailyKey);
+
+                if (minuteRequests == 0)
+                    await _redisCache.KeyExpireAsync(minuteKey, TimeSpan.FromMinutes(1));
+                if (dailyRequests == 0)
+                    await _redisCache.KeyExpireAsync(dailyKey, TimeSpan.FromHours(24));
             }
-            if (dailyRequests >= 500)
+            catch (Exception ex)
             {
-                _logger.LogWarning("API limit reached: 500 requests per day exceeded.");
-                throw new Exception("Daily API limit exceeded. Try again tomorrow.");
+                _logger.LogError(ex, "Error checking API rate limits");
+                throw new Exception("Error occurred while checking API rate limits.");
             }
-
-            await _redisCache.StringIncrementAsync(minuteKey);
-            await _redisCache.StringIncrementAsync(dailyKey);
-
-            if (minuteRequests == 0)
-                await _redisCache.KeyExpireAsync(minuteKey, TimeSpan.FromMinutes(1));
-            if (dailyRequests == 0)
-                await _redisCache.KeyExpireAsync(dailyKey, TimeSpan.FromHours(24));
         }
 
         private async Task<StockResponse> FetchStockDataFromApiAsync(string symbol)
         {
-            string apiKey = await GetSecretFromKeyVault("AlphaVantageApiKey");
-            string baseUrl = await GetSecretFromKeyVault("AlphaVantageBaseUrl");
-            string url = $"{baseUrl}?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=compact&datatype=json";
-
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
-            client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "alpha-vantage.p.rapidapi.com");
-
-            var response = await client.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"Error fetching stock data: {response.ReasonPhrase}");
-
-            var json = await response.Content.ReadAsStringAsync();
-            var stockResponse = JsonSerializer.Deserialize<StockResponse>(json, new JsonSerializerOptions
+            try
             {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+                string apiKey = await GetSecretFromKeyVault("AlphaVantageApiKey");
+                string baseUrl = await GetSecretFromKeyVault("AlphaVantageBaseUrl");
+                string url = $"{baseUrl}?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=compact&datatype=json";
 
-            if (stockResponse == null)
-            {
-                throw new Exception("Error deserializing stock data.");
+                var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "alpha-vantage.p.rapidapi.com");
+
+                var response = await client.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Error fetching stock data: {status}", response.StatusCode);
+                    throw new Exception($"Error fetching stock data: {response.ReasonPhrase}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                var stockResponse = JsonSerializer.Deserialize<StockResponse>(json, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+
+                if (stockResponse == null)
+                {
+                    throw new Exception("Error deserializing stock data.");
+                }
+
+                return stockResponse;
             }
-
-            return stockResponse;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching stock data for {symbol}", symbol);
+                throw new Exception("Error fetching stock data. Please try again later.");
+            }
         }
 
         private async Task CacheStockDataAsync(string symbol, StockResponse stockResponse)
         {
-            var json = JsonSerializer.Serialize(stockResponse, new JsonSerializerOptions
+            try
             {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+                var json = JsonSerializer.Serialize(stockResponse, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
 
-            await _redisCache.StringSetAsync(symbol, json, TimeSpan.FromMinutes(5));
-            _logger.LogInformation($"Cached data for {symbol} in Redis.");
+                await _redisCache.StringSetAsync(symbol, json, TimeSpan.FromMinutes(5));
+                _logger.LogInformation($"Cached data for {symbol} in Redis.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error caching stock data for {symbol}", symbol);
+            }
         }
 
         private async Task<string> GetSecretFromKeyVault(string secretName)
         {
-            var secret = await _keyVaultClient.GetSecretAsync(secretName);
-            return secret.Value.Value;
+            try
+            {
+                var secret = await _keyVaultClient.GetSecretAsync(secretName);
+                return secret.Value.Value;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving secret {secretName} from Key Vault", secretName);
+                throw new Exception("Error retrieving secrets from Key Vault.");
+            }
         }
     }
 }
